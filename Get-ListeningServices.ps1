@@ -3,6 +3,10 @@
 # May 2021
 # I know this is trash and I'm sorry
 
+# CS:
+# powershell-import /home/kali/Desktop/Get-ListeningServices.ps1
+# powershell Get-ListeningServices
+
 # Ripped from https://superuser.com/questions/1609746/how-to-sort-registry-entries-by-last-write-time-last-modified-time-in-powershell
 # Note: In my testing, all of the service registry key write timestamps get touched on reboot
 function Add-RegKeyLastWriteTime {

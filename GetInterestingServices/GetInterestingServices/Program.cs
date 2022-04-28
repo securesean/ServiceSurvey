@@ -32,7 +32,7 @@ namespace SloppyServiceChecker
         static public bool verboseFlag = true;
         static public bool forceFlag = true;
         // Good chunk of this code is stolen from SeatBelt: https://github.com/GhostPack/Seatbelt/blob/master/Seatbelt/Commands/Windows/ServicesCommand.cs
-        static void Main(string[] args)
+        static void Main(string[] args)     // TODO: find Unquoted File paths
         {
             // dump arg parsing
             foreach (string argument in args)
@@ -224,8 +224,11 @@ namespace SloppyServiceChecker
         private static bool isServiceRestartable(string serviceName)
         {
             // TODO: Actually get service SDDL string
+            System.Security.AccessControl.RawSecurityDescriptor sd = new RawSecurityDescriptor("D:(A;;CCLCSWRPLORC;;;AU)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY))");
+            return true;
 
             // From https://stackoverflow.com/questions/1454502/how-can-i-restart-a-windows-service-programmatically-in-net/1454564
+            /*
             ServiceController service = new ServiceController(serviceName);
             try
             {
@@ -242,6 +245,7 @@ namespace SloppyServiceChecker
                     return false;
             }
             return true;
+            */
         }
 
         public static bool hasWriteAccessToFile(string binaryPath)
