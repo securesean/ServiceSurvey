@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.Win32;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -20,19 +21,71 @@ using System.Threading.Tasks;
  * ToDo: 
  * - List listening ports
  * - Test DisplayName - looks like a known bug: https://stackoverflow.com/questions/50177003/windows-2016-servicecontroller-displayname-returns-servicecontroller-servicenam
- * - Fill in InstallDate 
+ * - Fill in InstallDate based on file 
  * 
  * Maybe:
  *  - Gather service intel from the registry
  *  - Gather service intel from powershell's 'Get-Service' because powershell sometimes has more access to things
  *  - Gather service intel from COM objects
+ *  - Get Listening processes   https://stackoverflow.com/questions/3956285/list-used-tcp-port-using-c-sharp
+        ipGlobalProperties.GetActiveTcpListeners();
+ *  
+ *  Questions:
+ *      Investigate what happens when there's mutliple binary paths!
+ *      What weird values can I put in the registry for a service name? Like a null in the middle of a stream?
+ *      
+ *  
+ *
+ *  
  * */
 namespace GetInterestingServices2
 {
     class serviceObj
     {
         public bool isInteresting = false; // Listing on a port, or non-MS signed
-
+        static public List<String> knownNobinPathServiceNames = new List<string> {
+            "ADOVMPPackage",
+            "adsi",
+            "Beep",
+            "CimFS",
+            "clr_optimization_v2.0.50727_32",
+            "clr_optimization_v2.0.50727_64",
+            "clr_optimization_v4.0.30319_32",
+            "clr_optimization_v4.0.30319_64",
+            "CoreUI",
+            "CPK1HWU",
+            "CPK2HWU",
+            "crypt32",
+            "DCLocator",
+            "ESENT",
+            "exfat",
+            "fastfat",
+            "Fs_Rec",
+            "ialm",
+            "iaStorAV",
+            "ldap",
+            "Lsa",
+            "Msfs",
+            "MsRPC",
+            "MSSCNTRS",
+            "napagent",
+            "NetbiosSmb",
+            "Npfs",
+            "NTDS",
+            "Ntfs",
+            "Null",
+            "PortProxy",
+            "RDMANDK",
+            "RDPNP",
+            "RDPUDD",
+            "Realtek",
+            "ReFS",
+            "ReFSv1",
+            "TCPIP6TUNNEL",
+            "TCPIPTUNNEL",
+            "TSDDD",
+            "workerdd",
+        };
 
         // if null, set. If already set, and new Value is different, echo
         // ... what do I want to see? Do I care that WMI has a different view? Not really... I just want to see 'interesting' services
@@ -103,22 +156,96 @@ namespace GetInterestingServices2
             }
         }
 
-        private string _PathName;
-        public string PathName
+        private string _binPath;
+        private string _CommandLine;
+        public string CommandLine
         {
-            get { return _PathName; }
+            get { return _CommandLine; }
             set
             {
-                if (_PathName == null)
-                    _PathName = value;
-                else if (_PathName == value || "" == value) { }
+                if (_CommandLine == null)
+                    _CommandLine = value;
+                else if (_CommandLine == value || "" == value) { }
                 else
-                    Console.WriteLine("Diff PathName: {0} (current) vs. {1} (new)", _PathName, value);
+                    Console.WriteLine("Diff PathName: {0} (current) vs. {1} (new)", _CommandLine, value);
 
                 // Interesting rules
-                if (!_PathName.ToLower().Trim('"').Trim('\'').StartsWith(@"c:\windows"))
+                if (!_CommandLine.ToLower().Trim('"').Trim('\'').StartsWith(@"c:\windows"))
                     isInteresting = true;
+
+                if (extractBinPath(_CommandLine) && File.Exists(_binPath))
+                {
+                    // Get install time based on newest date
+                    DateTime writeTime = System.IO.File.GetLastWriteTime(_binPath);
+                    DateTime creationTime = System.IO.File.GetCreationTime(_binPath);
+                    // Get the newest timestamp because installers sometimes preserve the timestamps from their containers 
+                    if (writeTime < creationTime)
+                        InstallDate = creationTime;
+                    else
+                        InstallDate = writeTime;
+                }
+
+
+                
+                
             }
+        }
+
+        private bool extractBinPath(string cmdLine)
+        {
+            if (serviceObj.knownNobinPathServiceNames.Contains(Name))
+                return false;
+
+            cmdLine = cmdLine.Trim('"');
+            cmdLine = cmdLine.Replace("\"", "");
+            cmdLine = cmdLine.Trim();
+            // Normalize the path
+            //Console.WriteLine("Pre:   " + cmdLine);
+            if (cmdLine.ToLower().StartsWith("\\systemroot"))
+                cmdLine = cmdLine.ToLower().Replace("\\systemroot", "%SystemRoot%");
+            if (cmdLine.ToLower().StartsWith("system32"))
+                cmdLine = cmdLine.ToLower().Replace("system32", "%SystemRoot%\\System32");
+            if (cmdLine.ToLower().StartsWith("syswow64"))
+                cmdLine = cmdLine.ToLower().Replace("syswow64", "%SystemRoot%\\SysWOW64");
+            if (cmdLine.ToLower().StartsWith(@"\\\?\?\\"))
+                cmdLine = cmdLine.Replace(@"\\\?\?\\", "");
+            cmdLine = Environment.ExpandEnvironmentVariables(cmdLine);
+            //Console.WriteLine("Post: " + cmdLine);
+
+            cmdLine = cmdLine.Trim('"');
+            cmdLine = cmdLine.Trim();
+
+            string justExePath = "";
+            string binPath = "";
+            string[] parts = cmdLine.Split(' ');
+
+            if (parts.Length == 1)
+            {
+                justExePath = parts[0];
+                if (File.Exists(justExePath))
+                {
+                    binPath = justExePath;
+                }
+            }
+            else
+            {
+                for (int i = 0; i <= parts.Length; i++)
+                {
+                    string[] pathParts = new string[cmdLine.Length];
+                    Array.Copy(parts, pathParts, i);
+
+                    justExePath = String.Join(" ", pathParts);
+                    //Console.WriteLine("Checking: " + justExePath);
+                    if (File.Exists(justExePath))
+                    {
+                        //Console.WriteLine("\tFound: " + justExePath);
+                        _binPath = justExePath;
+                        return true; 
+                    }
+                }
+            }
+
+            return false ;
         }
 
         private string _ProcessId;
@@ -150,7 +277,7 @@ namespace GetInterestingServices2
             }
         }
 
-        public string InstallDate { get; internal set; }
+        public DateTime InstallDate { get; internal set; }
 
         private List<String> _PortList;
         public string GetPortListCSV()
@@ -213,10 +340,10 @@ namespace GetInterestingServices2
                 serviceDict[name].Status = Convert.ToString(wmiService.GetPropertyValue("Status"));
                 serviceDict[name].Status = Convert.ToString(wmiService.GetPropertyValue("State"));
                 serviceDict[name].DisplayName = wmiService.GetPropertyValue("DisplayName").ToString();
-                serviceDict[name].PathName = Convert.ToString(wmiService.GetPropertyValue("PathName"));
+                serviceDict[name].CommandLine = Convert.ToString(wmiService.GetPropertyValue("PathName"));
                 serviceDict[name].ProcessId = Convert.ToString(wmiService.GetPropertyValue("ProcessId"));
                 serviceDict[name].StartName = Convert.ToString(wmiService.GetPropertyValue("StartName"));          // the user like LocalSystem
-                serviceDict[name].InstallDate = Convert.ToString(wmiService.GetPropertyValue("InstallDate"));    // no data is ever returned but I can still hope
+                //serviceDict[name].InstallDate = Convert.ToString(wmiService.GetPropertyValue("InstallDate"));    // no data is ever returned but I can still hope
                 /*  AcceptPause
                     AcceptStop
                     Caption
@@ -247,14 +374,106 @@ namespace GetInterestingServices2
 
             tasklistEnrichment(serviceDict);
 
+            // TODO
             netstatEnrichment(serviceDict);
 
+            // TODO
+            registryEnrichment(serviceDict);
+
             // TODO: Grap the latest Mod or Creation times and order the output list by that
-            fileDataEnrichment(serviceDict);
+            //fileDataEnrichment(serviceDict);
 
             printPrint(serviceDict);
 
             Console.WriteLine("Done");
+        }
+
+        private static void registryEnrichment(Dictionary<string, serviceObj> serviceDict)
+        {
+            RegistryKey serviceList = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
+
+            // Check to see if there were any subkeys
+            if (serviceList.SubKeyCount > 0)
+            {
+                foreach (string serviceName in serviceList.GetSubKeyNames())
+                {
+                    //Console.WriteLine(serviceName);
+                    RegistryKey serviceKey = serviceList.OpenSubKey(serviceName);
+                    string cmdLine = "";
+                    var values = serviceKey.GetValueNames();
+                    if (serviceKey.GetValueNames().Contains("ImagePath"))
+                    {
+                        //Console.WriteLine("\t" + serviceKey.GetValue("ImagePath"));
+                        cmdLine = (String)serviceKey.GetValue("ImagePath");
+                    }
+                    else if (serviceKey.GetValueNames().Contains("ServiceDll"))  // actually this is a key and the value it holds is 
+                    {
+                        //Console.WriteLine("\t" + serviceKey.GetValue("ServiceDll"));
+                        cmdLine = (String)serviceKey.GetValue("ServiceDll");
+                    }else if (serviceKey.GetValueNames().Contains("ProviderPath"))  // actually this is a key and the value it holds is 
+                    {
+                        //Console.WriteLine("\t" + serviceKey.GetValue("ProviderPath"));
+                        cmdLine = (String)serviceKey.GetValue("ProviderPath");
+                    }
+                    else if (serviceKey.GetValueNames().Contains("MofImagePath"))
+                    {
+                        //Console.WriteLine("\t" + serviceKey.GetValue("MofImagePath"));
+                        cmdLine = (String)serviceKey.GetValue("MofImagePath");
+                    }else if (serviceKey.GetValueNames().Contains("Library"))
+                    {
+                        //Console.WriteLine("\t" + serviceKey.GetValue("Library"));
+                        cmdLine = (String)serviceKey.GetValue("Library");
+                    }
+                    else if (serviceKey.GetSubKeyNames().Contains("Parameters")) // RegistryKey serviceList = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
+                    {
+                        RegistryKey paramSubkey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + serviceName + "\\Parameters");
+                        if (paramSubkey.GetValueNames().Contains("ServiceDll"))
+                        {
+                            cmdLine = (String)paramSubkey.GetValue("ServiceDll");
+                        }
+                    }
+                    else if (serviceKey.GetSubKeyNames().Contains("Performance")) // RegistryKey serviceList = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
+                    {
+                        // Should have caught 
+                        // MSDTC Bridge 3.0.0.0, PerfDisk, PerfNet
+                        // Computer\HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\MSDTC Bridge 3.0.0.0\Performance\Library
+                        RegistryKey paramSubkey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + serviceName + "\\Performance");
+                        if (paramSubkey.GetValueNames().Contains("Library"))
+                        {
+                            cmdLine = (String)paramSubkey.GetValue("Library");
+                        }
+                    }
+                    else
+                    {
+                        if(!serviceObj.knownNobinPathServiceNames.Contains(serviceName))
+                            Console.WriteLine("  Interesting: No Binary for this service: " + serviceName);
+                    }
+                    // Maybe:
+                    // Performance \Library
+                    // Parameters \ServiceDll
+
+                    if (cmdLine == "")
+                        continue;
+
+                    // assign it to the correct service
+                    foreach (KeyValuePair<string, serviceObj> item in serviceDict)
+                    {
+                        if (item.Value.Name == serviceName)
+                        {
+                            //Console.WriteLine("{0} (PID {1} {2}) listening on {3} ", item.Value.Name, pid1, pid2, port_number);
+                            item.Value.CommandLine = cmdLine;
+                         }
+                    }
+                    
+                    
+
+                    
+                    //foreach (var sub in serviceKey.GetSubKeyNames())
+                    //{
+                    //    //Console.WriteLine("\t" + sub);
+                    //}
+                }
+            }
         }
 
         private static void fileDataEnrichment(Dictionary<string, serviceObj> serviceDict)
@@ -361,6 +580,7 @@ namespace GetInterestingServices2
 
             foreach (string line in lines)
             {
+                // TODO: This
                 // "System Idle Process","0","N/A"
                 // "svchost.exe","1240","BrokerInfrastructure,DcomLaunch,PlugPlay,Power,SystemEventsBroker"
                 //Console.Write(line);
@@ -373,13 +593,14 @@ namespace GetInterestingServices2
         private static void printPrint(Dictionary<string, serviceObj> serviceDict)
         {
             //      Name, DisplayName, StartName, InstallDate, Status,PortList    PathName
-            string formatString = "{0,28} |{1,42} |{2,10} |{3,10} |{4,10} | {5,48}  ";
+            //string formatString = "{0,28} |{1,42} |{2,10} |{3,10} |{4,10} | {5,48}  ";
+            string formatString = "{0,28} ,{1,42} ,{2,10} ,{3,10} ,{4,10} , {5,48}  ";
             Console.WriteLine("Interesting:");
             foreach (KeyValuePair<string, serviceObj> item in serviceDict)
             {
                 // ToDo: Sort by: Ports, Running, 
                 if (item.Value.isInteresting)
-                    Console.WriteLine(formatString, item.Value.Name, item.Value.DisplayName, item.Value.InstallDate, item.Value.Status,  item.Value.GetPortListCSV(), item.Value.PathName.Trim());
+                    Console.WriteLine(formatString, item.Value.Name, item.Value.DisplayName, item.Value.InstallDate, item.Value.Status,  item.Value.GetPortListCSV(), item.Value.CommandLine.Trim());
             }
 
             if (printAll)
@@ -388,7 +609,7 @@ namespace GetInterestingServices2
                 Console.WriteLine("All:");
                 foreach (KeyValuePair<string, serviceObj> item in serviceDict)
                 {
-                    Console.WriteLine(formatString, item.Value.Name, item.Value.DisplayName, item.Value.InstallDate, item.Value.Status,  item.Value.GetPortListCSV(), item.Value.PathName);
+                    Console.WriteLine(formatString, item.Value.Name, item.Value.DisplayName, item.Value.InstallDate, item.Value.Status,  item.Value.GetPortListCSV(), item.Value.CommandLine);
                 }
             }
             
